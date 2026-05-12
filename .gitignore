@@ -3,6 +3,7 @@
 
 # build outputs
 **/.next/
+**/.next_corrupt_*/
 backend/dist/
 
 # local env
