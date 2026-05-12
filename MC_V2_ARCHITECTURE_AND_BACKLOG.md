@@ -3,6 +3,10 @@
 > Wave 1 architecture/API lock and contract-complete execution tickets are captured in:
 > - `V2_FOUNDATION_ARCHITECTURE_LOCK.md`
 > - `WAVE_1_TICKET_CONTRACTS.md`
+>
+> Wave 2 architecture/API lock and execution-ready contracts are captured in:
+> - `V2_WAVE_2_ARCHITECTURE_LOCK.md`
+> - `WAVE_2_TICKET_CONTRACTS.md`
 
 ## 1) Architecture v2 Proposal (implementation-ready)
 

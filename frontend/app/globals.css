@@ -172,6 +172,12 @@ body {
   color: #991b1b;
 }
 
+.warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .button {
   margin-top: 0.65rem;
   border: 1px solid #d1d5db;
@@ -179,6 +185,12 @@ body {
   border-radius: 8px;
   padding: 0.45rem 0.75rem;
   cursor: pointer;
+}
+
+.active-toggle {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
 }
 
 .input {
@@ -243,6 +255,82 @@ body {
   color: #b91c1c;
 }
 
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem;
+}
+
+.panel-line {
+  margin: 0 0 0.55rem;
+  font-size: 0.92rem;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.view-toggle .button {
+  margin-top: 0;
+}
+
+.kanban-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 0.65rem;
+}
+
+.kanban-col {
+  border: 1px solid #edf0f3;
+  border-radius: 10px;
+  background: #fafcff;
+  padding: 0.5rem;
+}
+
+.kanban-col-header {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin-bottom: 0.45rem;
+}
+
+.kanban-cards {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.kanban-card {
+  border: 1px solid #e5e7eb;
+  background: white;
+  border-radius: 8px;
+  padding: 0.5rem;
+}
+
+.kanban-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.danger-badge {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
 @media (max-width: 1000px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -268,6 +356,10 @@ body {
   }
 
   .primary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kanban-grid {
     grid-template-columns: 1fr;
   }
 }

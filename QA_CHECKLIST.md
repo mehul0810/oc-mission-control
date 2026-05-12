@@ -1,4 +1,4 @@
-# Mission Control v2 — QA Gate Checklist (Wave 1)
+# Mission Control v2 — QA Gate Checklist (Wave 2)
 
 Owner: Vision (QA)  
 Sign-off Partners: Tony (technical), Jarvis (go/no-go)
@@ -6,16 +6,20 @@ Sign-off Partners: Tony (technical), Jarvis (go/no-go)
 ## Gate 0 — Build Integrity (automated)
 - [ ] `bash scripts/verify.sh` passes
 - [ ] `bash scripts/smoke_api.sh` passes
+- [ ] `bash scripts/smoke_ui_v2.sh` passes
 - [ ] Backend build succeeds (`backend npm run build`)
+- [ ] Frontend production build succeeds (`frontend npm run build`)
 
 ## Gate 1 — API Smoke Scenarios (automated)
 - [ ] Health endpoint returns `{ data.status: "ok" }`
 - [ ] Core reads return valid JSON arrays: agents/projects/tasks
 - [ ] Dashboard summary + ownership board return expected data
+- [ ] Filtered reads work: tasks/summary/ownership-board/chat/activity query params
 - [ ] Unknown route returns `404` with envelope `{ error: { code, message } }`
 - [ ] Unauthorized write is rejected (`401`, `UNAUTHORIZED`)
 - [ ] Invalid payload on write returns `400`, `VALIDATION_ERROR`
-- [ ] Event stream endpoint responds and emits an event frame
+- [ ] Create/patch flows succeed for project/task/chat and appear in activity
+- [ ] Event stream endpoint responds with `200` and `text/event-stream`
 
 ## Gate 2 — Regression Integrity
 ### Suite A (API contract) — automated
@@ -24,13 +28,14 @@ Sign-off Partners: Tony (technical), Jarvis (go/no-go)
 - [ ] Auth guard active on mutating routes
 - [ ] Error envelope contract validated on 404 and invalid payload
 
-### Suite B (UI smoke) — manual
+### Suite B (UI smoke) — automated baseline + manual
 - [ ] Dashboard loads without runtime crash
-- [ ] KPI cards match API values
-- [ ] Ownership board rows + placeholders render correctly
-- [ ] Quick add task updates board/counters
-- [ ] Watercooler post appears in chat + activity
-- [ ] Failed API call shows user-safe error state
+- [ ] Core UI slices render: Command Center, Execution Board, Agent Health Pulse
+- [ ] Collaboration slices render: Quick Add Task, Watercooler Chat, Activity Timeline
+- [ ] Manual: KPI cards match API values in live browser session
+- [ ] Manual: Quick add task updates board/counters
+- [ ] Manual: Watercooler post appears in chat + activity
+- [ ] Manual: Failed API call shows user-safe error state
 
 ## Gate 3 — Performance Sanity (manual release candidate)
 - [ ] `/dashboard/summary` p95 <= 400ms (30 samples)
@@ -48,6 +53,7 @@ Sign-off Partners: Tony (technical), Jarvis (go/no-go)
 ## Smoke scenario commands
 - Automated bundle: `bash scripts/qa_gate_v2.sh`
 - API-only smoke: `bash scripts/smoke_api.sh`
+- UI-only smoke: `bash scripts/smoke_ui_v2.sh`
 
 ## Evidence Log Template
 - Commit:

@@ -46,6 +46,7 @@ check_file "QA_RELEASE_STRATEGY_V2.md"
 check_file "README_RUN.md"
 check_file "scripts/smoke_api.sh"
 check_file "scripts/qa_gate_v2.sh"
+check_file "scripts/smoke_ui_v2.sh"
 
 # Tooling assumptions for smoke automation
 check_cmd "curl"

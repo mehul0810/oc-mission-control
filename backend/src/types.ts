@@ -19,12 +19,17 @@ export interface Project {
 export interface Task {
   id: string;
   title: string;
+  description?: string;
   projectId: string;
   agentId: string;
   status: TaskStatus;
-  priority: 'low' | 'medium' | 'high' | 'critical';
+  priority: 'low' | 'medium' | 'high' | 'critical' | 'p0' | 'p1' | 'p2' | 'p3';
+  effortPoints?: number;
   dueDate?: string;
+  slaDueAt?: string;
   blocker?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ChatMessage {

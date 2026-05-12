@@ -6,6 +6,7 @@ import dashboardRouter from './routes/dashboard';
 import chatRouter from './routes/chat';
 import activityRouter from './routes/activity';
 import eventsRouter from './routes/events';
+import v2Router from './routes/v2';
 import { requireAdmin } from './middleware/adminAuth';
 import { fail, ok } from './utils/api';
 
@@ -30,7 +31,7 @@ app.get('/api/v1/health', (_req, res) => {
 
 app.use('/api/v1/events', eventsRouter);
 
-app.use(['/api/v1/projects', '/api/v1/tasks', '/api/v1/agents', '/api/v1/chat'], (req, res, next) => {
+app.use(['/api/v1/projects', '/api/v1/tasks', '/api/v1/agents', '/api/v1/chat', '/api/v2'], (req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next();
   }
@@ -43,6 +44,7 @@ app.use('/api/v1/tasks', tasksRouter);
 app.use('/api/v1/dashboard', dashboardRouter);
 app.use('/api/v1/chat', chatRouter);
 app.use('/api/v1/activity', activityRouter);
+app.use('/api/v2', v2Router);
 
 app.use((_req, res) => {
   return fail(res, 404, 'NOT_FOUND', 'Not Found');
