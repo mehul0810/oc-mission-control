@@ -1,38 +1,33 @@
 import { Router } from 'express';
-import { agents, projects, tasks } from '../data/seed';
+import { db, getTaskStatusBreakdown } from '../data/store';
 import type { TaskStatus } from '../types';
+import { ok } from '../utils/api';
 
 const router = Router();
 
-router.get('/summary', (_req, res) => {
-  const statusBreakdown = tasks.reduce<Record<TaskStatus, number>>(
-    (acc, task) => {
-      acc[task.status] = (acc[task.status] ?? 0) + 1;
-      return acc;
-    },
-    {
-      todo: 0,
-      in_progress: 0,
-      done: 0,
-      blocked: 0
-    }
-  );
+router.get('/summary', (req, res) => {
+  const { projectId, agentId, status } = req.query;
+  const filteredTasks = db.tasks.filter((task) => {
+    if (projectId && task.projectId !== String(projectId)) return false;
+    if (agentId && task.agentId !== String(agentId)) return false;
+    if (status && task.status !== String(status as TaskStatus)) return false;
+    return true;
+  });
 
-  res.json({
-    data: {
-      totals: {
-        agents: agents.length,
-        projects: projects.length
-      },
-      tasks: statusBreakdown
-    }
+  return ok(res, {
+    totals: {
+      agents: db.agents.length,
+      projects: db.projects.length,
+      tasks: filteredTasks.length
+    },
+    tasks: getTaskStatusBreakdown(filteredTasks)
   });
 });
 
 router.get('/ownership-board', (req, res) => {
   const { projectId, agentId, status } = req.query;
 
-  const filteredTasks = tasks.filter((task) => {
+  const filteredTasks = db.tasks.filter((task) => {
     if (projectId && task.projectId !== String(projectId)) return false;
     if (agentId && task.agentId !== String(agentId)) return false;
     if (status && task.status !== String(status as TaskStatus)) return false;
@@ -40,8 +35,8 @@ router.get('/ownership-board', (req, res) => {
   });
 
   const board = filteredTasks.map((task) => {
-    const agent = agents.find((a) => a.id === task.agentId);
-    const project = projects.find((p) => p.id === task.projectId);
+    const agent = db.agents.find((a) => a.id === task.agentId);
+    const project = db.projects.find((p) => p.id === task.projectId);
 
     return {
       taskId: task.id,
@@ -57,7 +52,7 @@ router.get('/ownership-board', (req, res) => {
     };
   });
 
-  res.json({ data: board });
+  return ok(res, board);
 });
 
 export default router;

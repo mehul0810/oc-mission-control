@@ -27,6 +27,24 @@ export interface Task {
   blocker?: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  topic: string;
+  authorAgentId: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface ActivityEvent {
+  id: string;
+  type: 'task' | 'project' | 'chat' | 'agent' | 'system';
+  action: string;
+  entityId: string;
+  actorAgentId?: string;
+  summary: string;
+  createdAt: string;
+}
+
 export interface ApiEnvelope<T> {
   data: T;
   meta?: Record<string, unknown>;
@@ -39,3 +57,25 @@ export interface ApiErrorEnvelope {
     details?: unknown[];
   };
 }
+
+export type EventChannel = 'activity' | 'chat' | 'system';
+
+export interface HeartbeatEvent {
+  ts: string;
+}
+
+export interface StreamConnectedEvent {
+  ts: string;
+  heartbeatMs: number;
+}
+
+export interface EventPayloadMap {
+  activity: ActivityEvent;
+  chat: ChatMessage;
+  system: StreamConnectedEvent | HeartbeatEvent;
+}
+
+export type EventPayload<T extends EventChannel> = {
+  channel: T;
+  data: EventPayloadMap[T];
+};

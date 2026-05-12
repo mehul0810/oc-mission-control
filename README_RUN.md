@@ -3,12 +3,20 @@
 ## Prerequisites
 - Node.js 20+
 - npm 10+
+- `curl`
+- `jq`
 
 ## 0) Repo quality gate
 From project root:
 
 ```bash
 bash scripts/verify.sh
+```
+
+Full automated v2 QA gate:
+
+```bash
+bash scripts/qa_gate_v2.sh
 ```
 
 ---
@@ -29,10 +37,6 @@ npm run build
 npm start
 ```
 
-### Expected now
-Current backend package scripts expect `src/server.ts`.
-If missing, `npm run dev`/`npm run build` will fail until backend bootstrap is completed.
-
 ---
 
 ## 2) Frontend (current implementation)
@@ -51,7 +55,8 @@ npm run dev
 ## 3) Quick test checklist
 - [ ] `bash scripts/verify.sh` returns PASS
 - [ ] `bash scripts/smoke_api.sh` returns PASS
-- [ ] Backend starts (or missing bootstrap is clearly reported)
+- [ ] `bash scripts/qa_gate_v2.sh` returns automated PASS
+- [ ] Backend starts
 - [ ] Frontend starts (`frontend`)
 - [ ] Core endpoints respond: agents/projects/tasks
 - [ ] Dashboard renders counters + ownership board
