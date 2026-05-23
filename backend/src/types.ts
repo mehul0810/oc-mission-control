@@ -40,6 +40,72 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface CollabThread {
+  id: string;
+  projectId: string;
+  title: string;
+  createdByAgentId: string;
+  createdAt: string;
+}
+
+export interface CollabMessage {
+  id: string;
+  threadId: string;
+  projectId: string;
+  actorAgentId: string;
+  body: string;
+  mentions: string[];
+  createdAt: string;
+}
+
+export type DecisionState = 'open' | 'decided' | 'superseded';
+
+export interface Decision {
+  id: string;
+  projectId: string;
+  title: string;
+  context?: string;
+  state: DecisionState;
+  resolution?: string;
+  decidedByAgentId?: string;
+  supersededByDecisionId?: string;
+  createdByAgentId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DecisionTransitionEvent {
+  type: 'decision.transitioned';
+  id: string;
+  projectId: string;
+  fromState: DecisionState;
+  toState: DecisionState;
+  actorAgentId: string;
+  resolution?: string;
+  decidedByAgentId?: string;
+  supersededByDecisionId?: string;
+  transitionedAt: string;
+}
+
+export interface OutboxEvent {
+  id: string;
+  eventType: string;
+  aggregateId: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CollabMessageCreatedEvent {
+  type: 'collab.message.created';
+  id: string;
+  threadId: string;
+  projectId: string;
+  actorAgentId: string;
+  body: string;
+  mentions: string[];
+  createdAt: string;
+}
+
 export interface ActivityEvent {
   id: string;
   type: 'task' | 'project' | 'chat' | 'agent' | 'system';
@@ -76,7 +142,7 @@ export interface StreamConnectedEvent {
 
 export interface EventPayloadMap {
   activity: ActivityEvent;
-  chat: ChatMessage;
+  chat: ChatMessage | CollabMessageCreatedEvent;
   system: StreamConnectedEvent | HeartbeatEvent;
 }
 

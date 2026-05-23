@@ -1,5 +1,21 @@
 import { agents as seedAgents, projects as seedProjects, tasks as seedTasks } from './seed';
-import type { ActivityEvent, Agent, AgentStatus, ChatMessage, EventChannel, EventPayload, Project, Task, TaskStatus } from '../types';
+import type {
+  ActivityEvent,
+  Agent,
+  AgentStatus,
+  ChatMessage,
+  CollabMessageCreatedEvent,
+  CollabMessage,
+  CollabThread,
+  Decision,
+  DecisionTransitionEvent,
+  EventChannel,
+  EventPayload,
+  OutboxEvent,
+  Project,
+  Task,
+  TaskStatus
+} from '../types';
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
@@ -11,6 +27,10 @@ export const db: {
   projects: Project[];
   tasks: Task[];
   chatMessages: ChatMessage[];
+  collabThreads: CollabThread[];
+  collabMessages: CollabMessage[];
+  decisions: Decision[];
+  outboxEvents: OutboxEvent[];
   activities: ActivityEvent[];
 } = {
   agents: clone(seedAgents),
@@ -19,6 +39,18 @@ export const db: {
   chatMessages: [
     { id: makeId('msg'), topic: 'general', authorAgentId: 'agent-jarvis', content: 'Mission Control channel live.', createdAt: nowIso() }
   ],
+  collabThreads: [
+    {
+      id: 'thread-wave2-collab',
+      projectId: 'project-mc',
+      title: 'Wave 2 Collaboration API',
+      createdByAgentId: 'agent-jarvis',
+      createdAt: nowIso()
+    }
+  ],
+  collabMessages: [],
+  decisions: [],
+  outboxEvents: [],
   activities: []
 };
 
@@ -94,6 +126,144 @@ export function createChatMessage(input: Omit<ChatMessage, 'id' | 'createdAt'>) 
   addActivity({ type: 'chat', action: 'posted', entityId: msg.id, actorAgentId: msg.authorAgentId, summary: `${msg.authorAgentId} posted in #${msg.topic}` });
   eventBus.emit('chat', msg);
   return msg;
+}
+
+export function createCollabThread(input: Omit<CollabThread, 'id' | 'createdAt'>) {
+  const thread: CollabThread = { id: makeId('thread'), createdAt: nowIso(), ...input };
+  db.collabThreads.push(thread);
+  return thread;
+}
+
+export function createOutboxEvent(input: Omit<OutboxEvent, 'id' | 'createdAt'>) {
+  const event: OutboxEvent = { id: makeId('evt'), createdAt: nowIso(), ...input };
+  db.outboxEvents.push(event);
+  return event;
+}
+
+export function createCollabMessage(input: Omit<CollabMessage, 'id' | 'createdAt'>) {
+  const message: CollabMessage = { id: makeId('cmsg'), createdAt: nowIso(), ...input };
+  db.collabMessages.push(message);
+
+  const outboxPayload: CollabMessageCreatedEvent = {
+    type: 'collab.message.created',
+    id: message.id,
+    threadId: message.threadId,
+    projectId: message.projectId,
+    actorAgentId: message.actorAgentId,
+    body: message.body,
+    mentions: message.mentions,
+    createdAt: message.createdAt
+  };
+
+  createOutboxEvent({
+    eventType: 'collab.message.created',
+    aggregateId: message.threadId,
+    payload: outboxPayload as unknown as Record<string, unknown>
+  });
+
+  addActivity({
+    type: 'chat',
+    action: 'collab_message_posted',
+    entityId: message.id,
+    actorAgentId: message.actorAgentId,
+    summary: `${message.actorAgentId} posted in collab thread ${message.threadId}`
+  });
+
+  eventBus.emit('chat', outboxPayload);
+  return message;
+}
+
+export function createDecision(input: Omit<Decision, 'id' | 'createdAt' | 'updatedAt'>) {
+  const now = nowIso();
+  const decision: Decision = {
+    id: makeId('decision'),
+    createdAt: now,
+    updatedAt: now,
+    ...input
+  };
+
+  db.decisions.unshift(decision);
+
+  addActivity({
+    type: 'system',
+    action: 'decision_created',
+    entityId: decision.id,
+    actorAgentId: decision.createdByAgentId,
+    summary: `Decision created: ${decision.title}`
+  });
+
+  createOutboxEvent({
+    eventType: 'decision.created',
+    aggregateId: decision.id,
+    payload: {
+      type: 'decision.created',
+      id: decision.id,
+      projectId: decision.projectId,
+      title: decision.title,
+      state: decision.state,
+      createdByAgentId: decision.createdByAgentId,
+      createdAt: decision.createdAt
+    }
+  });
+
+  return decision;
+}
+
+export function transitionDecision(
+  id: string,
+  input: {
+    toState: Decision['state'];
+    actorAgentId: string;
+    resolution?: string;
+    decidedByAgentId?: string;
+    supersededByDecisionId?: string;
+  }
+) {
+  const decision = db.decisions.find((item) => item.id === id);
+  if (!decision) return null;
+
+  const fromState = decision.state;
+  const transitionedAt = nowIso();
+
+  decision.state = input.toState;
+  decision.updatedAt = transitionedAt;
+  decision.resolution = input.toState === 'decided' ? input.resolution : decision.resolution;
+  decision.decidedByAgentId = input.toState === 'decided' ? input.decidedByAgentId : decision.decidedByAgentId;
+  decision.supersededByDecisionId =
+    input.toState === 'superseded' ? input.supersededByDecisionId ?? decision.supersededByDecisionId : undefined;
+
+  const outboxPayload: DecisionTransitionEvent = {
+    type: 'decision.transitioned',
+    id: decision.id,
+    projectId: decision.projectId,
+    fromState,
+    toState: decision.state,
+    actorAgentId: input.actorAgentId,
+    resolution: input.resolution,
+    decidedByAgentId: input.decidedByAgentId,
+    supersededByDecisionId: decision.supersededByDecisionId,
+    transitionedAt
+  };
+
+  createOutboxEvent({
+    eventType: 'decision.transitioned',
+    aggregateId: decision.id,
+    payload: outboxPayload as unknown as Record<string, unknown>
+  });
+
+  addActivity({
+    type: 'system',
+    action: 'decision_transitioned',
+    entityId: decision.id,
+    actorAgentId: input.actorAgentId,
+    summary: `Decision transitioned ${fromState} -> ${decision.state}`
+  });
+
+  return {
+    decision,
+    fromState,
+    transitionedAt
+  };
 }
 
 export function getTaskStatusBreakdown(filteredTasks: Task[]) {

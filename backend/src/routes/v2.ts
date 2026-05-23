@@ -1,9 +1,12 @@
 import { Router } from 'express';
-import { createTask, db, updateTask } from '../data/store';
-import type { Task, TaskStatus } from '../types';
+import { createDecision, createTask, db, transitionDecision, updateTask } from '../data/store';
+import collabRouter from './collab';
+import type { DecisionState, Task, TaskStatus } from '../types';
 import { fail, ok, requireNonEmptyString } from '../utils/api';
 
 const router = Router();
+
+router.use('/collab', collabRouter);
 
 type WorkItemState = TaskStatus;
 type WorkItemPriority = 'p0' | 'p1' | 'p2' | 'p3';
@@ -28,6 +31,7 @@ const workItemToTaskPriority: Record<WorkItemPriority, Task['priority']> = {
 
 const allowedStates: WorkItemState[] = ['todo', 'in_progress', 'blocked', 'done'];
 const allowedPriorities: WorkItemPriority[] = ['p0', 'p1', 'p2', 'p3'];
+const allowedDecisionStates: DecisionState[] = ['open', 'decided', 'superseded'];
 
 function parseState(value: unknown): WorkItemState | null {
   if (typeof value !== 'string') return null;
@@ -37,6 +41,17 @@ function parseState(value: unknown): WorkItemState | null {
 function parsePriority(value: unknown): WorkItemPriority | null {
   if (typeof value !== 'string') return null;
   return allowedPriorities.includes(value as WorkItemPriority) ? (value as WorkItemPriority) : null;
+}
+
+function parseDecisionState(value: unknown): DecisionState | null {
+  if (typeof value !== 'string') return null;
+  return allowedDecisionStates.includes(value as DecisionState) ? (value as DecisionState) : null;
+}
+
+function isDecisionTransitionAllowed(fromState: DecisionState, toState: DecisionState) {
+  if (fromState === 'open') return toState === 'decided' || toState === 'superseded';
+  if (fromState === 'decided') return toState === 'superseded';
+  return false;
 }
 
 function isTransitionAllowed(fromState: WorkItemState, toState: WorkItemState) {
@@ -243,6 +258,138 @@ router.patch('/work-items/:id/transition', (req, res) => {
     fromState,
     toState: updated.status,
     updatedAt: updated.updatedAt ?? updatedAt
+  });
+});
+
+router.post('/decisions', (req, res) => {
+  const { projectId, title, context, createdByAgentId } = req.body as {
+    projectId?: unknown;
+    title?: unknown;
+    context?: unknown;
+    createdByAgentId?: unknown;
+  };
+
+  const validProjectId = requireNonEmptyString(projectId, 'projectId');
+  const validTitle = requireNonEmptyString(title, 'title');
+  const validCreatedByAgentId = requireNonEmptyString(createdByAgentId, 'createdByAgentId');
+
+  if (!validProjectId || !validTitle || !validCreatedByAgentId) {
+    return fail(res, 400, 'VALIDATION_ERROR', 'projectId, title, and createdByAgentId are required');
+  }
+
+  if (validTitle.length < 3 || validTitle.length > 200) {
+    return fail(res, 400, 'VALIDATION_ERROR', 'title must be 3-200 characters');
+  }
+
+  const projectExists = db.projects.some((project) => project.id === validProjectId);
+  if (!projectExists) {
+    return fail(res, 404, 'NOT_FOUND', 'Project not found');
+  }
+
+  const actorExists = db.agents.some((agent) => agent.id === validCreatedByAgentId);
+  if (!actorExists) {
+    return fail(res, 400, 'VALIDATION_ERROR', 'createdByAgentId must be a known agent ID');
+  }
+
+  let validContext: string | undefined;
+  if (context != null) {
+    const parsedContext = requireNonEmptyString(context, 'context');
+    if (!parsedContext) {
+      return fail(res, 400, 'VALIDATION_ERROR', 'context must be a non-empty string when provided');
+    }
+    validContext = parsedContext;
+  }
+
+  const decision = createDecision({
+    projectId: validProjectId,
+    title: validTitle,
+    context: validContext,
+    state: 'open',
+    createdByAgentId: validCreatedByAgentId
+  });
+
+  return ok(
+    res,
+    {
+      id: decision.id,
+      state: decision.state,
+      createdAt: decision.createdAt
+    },
+    201
+  );
+});
+
+router.patch('/decisions/:id/transition', (req, res) => {
+  const decision = db.decisions.find((item) => item.id === req.params.id);
+  if (!decision) {
+    return fail(res, 404, 'NOT_FOUND', 'Decision not found');
+  }
+
+  const { toState, actorAgentId, resolution, decidedByAgentId, supersededByDecisionId } = req.body as {
+    toState?: unknown;
+    actorAgentId?: unknown;
+    resolution?: unknown;
+    decidedByAgentId?: unknown;
+    supersededByDecisionId?: unknown;
+  };
+
+  const parsedToState = parseDecisionState(toState);
+  const validActorAgentId = requireNonEmptyString(actorAgentId, 'actorAgentId');
+  if (!parsedToState || !validActorAgentId) {
+    return fail(res, 400, 'VALIDATION_ERROR', 'toState and actorAgentId are required');
+  }
+
+  if (!isDecisionTransitionAllowed(decision.state, parsedToState)) {
+    return fail(res, 409, 'INVALID_DECISION_TRANSITION', `Invalid transition from ${decision.state} to ${parsedToState}`);
+  }
+
+  const actorExists = db.agents.some((agent) => agent.id === validActorAgentId);
+  if (!actorExists) {
+    return fail(res, 400, 'VALIDATION_ERROR', 'actorAgentId must be a known agent ID');
+  }
+
+  let validResolution: string | undefined;
+  let validDecidedByAgentId: string | undefined;
+  let validSupersededByDecisionId: string | undefined;
+
+  if (parsedToState === 'decided') {
+    validResolution = requireNonEmptyString(resolution, 'resolution') ?? undefined;
+    validDecidedByAgentId = requireNonEmptyString(decidedByAgentId, 'decidedByAgentId') ?? undefined;
+
+    if (!validResolution || !validDecidedByAgentId) {
+      return fail(res, 400, 'VALIDATION_ERROR', 'resolution and decidedByAgentId are required when transitioning to decided');
+    }
+
+    const deciderExists = db.agents.some((agent) => agent.id === validDecidedByAgentId);
+    if (!deciderExists) {
+      return fail(res, 400, 'VALIDATION_ERROR', 'decidedByAgentId must be a known agent ID');
+    }
+  }
+
+  if (parsedToState === 'superseded' && supersededByDecisionId != null) {
+    validSupersededByDecisionId = requireNonEmptyString(supersededByDecisionId, 'supersededByDecisionId') ?? undefined;
+    if (!validSupersededByDecisionId) {
+      return fail(res, 400, 'VALIDATION_ERROR', 'supersededByDecisionId must be non-empty when provided');
+    }
+  }
+
+  const transitioned = transitionDecision(decision.id, {
+    toState: parsedToState,
+    actorAgentId: validActorAgentId,
+    resolution: validResolution,
+    decidedByAgentId: validDecidedByAgentId,
+    supersededByDecisionId: validSupersededByDecisionId
+  });
+
+  if (!transitioned) {
+    return fail(res, 404, 'NOT_FOUND', 'Decision not found');
+  }
+
+  return ok(res, {
+    id: transitioned.decision.id,
+    fromState: transitioned.fromState,
+    toState: transitioned.decision.state,
+    transitionedAt: transitioned.transitionedAt
   });
 });
 

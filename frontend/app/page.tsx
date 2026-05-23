@@ -6,6 +6,9 @@ type Summary = {
   totals: { agents: number; projects: number; tasks?: number };
   tasks: { todo: number; in_progress: number; done: number; blocked: number };
   workload?: { overloadedAgents?: number };
+  kpis?: { activeItems?: number; blockedItems?: number; overdueItems?: number; overloadedAgents?: number };
+  riskLevel?: string;
+  generatedAt?: string;
 };
 
 type Agent = { id: string; name: string; role: string; status: string };
@@ -108,6 +111,48 @@ function isOverdue(dueDate?: string | null): boolean {
   return Number.isFinite(due) && due < Date.now();
 }
 
+function normalizeSummary(input: unknown): Summary {
+  const base: Summary = {
+    totals: { agents: 0, projects: 0, tasks: 0 },
+    tasks: { todo: 0, in_progress: 0, done: 0, blocked: 0 }
+  };
+
+  if (!input || typeof input !== "object") return base;
+  const s = input as Record<string, any>;
+
+  if (s.totals || s.tasks || s.workload) {
+    return {
+      totals: {
+        agents: Number(s.totals?.agents ?? 0),
+        projects: Number(s.totals?.projects ?? 0),
+        tasks: Number(s.totals?.tasks ?? 0)
+      },
+      tasks: {
+        todo: Number(s.tasks?.todo ?? 0),
+        in_progress: Number(s.tasks?.in_progress ?? 0),
+        done: Number(s.tasks?.done ?? 0),
+        blocked: Number(s.tasks?.blocked ?? 0)
+      },
+      workload: { overloadedAgents: Number(s.workload?.overloadedAgents ?? 0) },
+      kpis: s.kpis,
+      riskLevel: s.riskLevel,
+      generatedAt: s.generatedAt
+    };
+  }
+
+  if (s.kpis) {
+    return {
+      ...base,
+      kpis: s.kpis,
+      riskLevel: s.riskLevel,
+      generatedAt: s.generatedAt,
+      workload: { overloadedAgents: Number(s.kpis?.overloadedAgents ?? 0) }
+    };
+  }
+
+  return base;
+}
+
 export default function Page() {
   const [summary, setSummary] = useState<Summary>(DEFAULT_SUMMARY);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -150,7 +195,7 @@ export default function Page() {
         ? (boardData as WorkItemRow[])
         : toWorkItems(boardData as OwnershipRow[]);
 
-      setSummary(summaryJson?.data ?? DEFAULT_SUMMARY);
+      setSummary(normalizeSummary(summaryJson?.data));
       setWorkItems(normalizedWorkItems);
       setAgents(agentsJson?.data ?? []);
       setProjects(projectsJson?.data ?? []);
@@ -363,7 +408,7 @@ export default function Page() {
             <p className="panel-line"><strong>Risk:</strong> {bottleneckMetrics.atRiskCount} total (blocked + overdue).</p>
             <div className="chip-row">
               <span className="badge">Blocked: {bottleneckMetrics.blockedCount}</span>
-              <span className="badge">Overloaded Agents: {summary.workload?.overloadedAgents ?? 0}</span>
+              <span className="badge">Overloaded Agents: {summary.workload?.overloadedAgents ?? summary.kpis?.overloadedAgents ?? 0}</span>
             </div>
           </article>
         </section>
