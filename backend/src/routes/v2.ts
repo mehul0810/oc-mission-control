@@ -1,7 +1,17 @@
 import { Router } from 'express';
-import { createDecision, createTask, db, transitionDecision, updateTask } from '../data/store';
+import {
+  createDecision,
+  createTask,
+  createWorkItemDependency,
+  db,
+  dependencyExists,
+  getUnresolvedHardDependencies,
+  hasDependencyPath,
+  transitionDecision,
+  updateTask
+} from '../data/store';
 import collabRouter from './collab';
-import type { DecisionState, Task, TaskStatus } from '../types';
+import type { DecisionState, DependencyType, Task, TaskStatus } from '../types';
 import { fail, ok, requireNonEmptyString } from '../utils/api';
 
 const router = Router();
@@ -32,6 +42,7 @@ const workItemToTaskPriority: Record<WorkItemPriority, Task['priority']> = {
 const allowedStates: WorkItemState[] = ['todo', 'in_progress', 'blocked', 'done'];
 const allowedPriorities: WorkItemPriority[] = ['p0', 'p1', 'p2', 'p3'];
 const allowedDecisionStates: DecisionState[] = ['open', 'decided', 'superseded'];
+const allowedDependencyTypes: DependencyType[] = ['hard', 'soft'];
 
 function parseState(value: unknown): WorkItemState | null {
   if (typeof value !== 'string') return null;
@@ -46,6 +57,11 @@ function parsePriority(value: unknown): WorkItemPriority | null {
 function parseDecisionState(value: unknown): DecisionState | null {
   if (typeof value !== 'string') return null;
   return allowedDecisionStates.includes(value as DecisionState) ? (value as DecisionState) : null;
+}
+
+function parseDependencyType(value: unknown): DependencyType | null {
+  if (typeof value !== 'string') return null;
+  return allowedDependencyTypes.includes(value as DependencyType) ? (value as DependencyType) : null;
 }
 
 function isDecisionTransitionAllowed(fromState: DecisionState, toState: DecisionState) {
@@ -232,6 +248,18 @@ router.patch('/work-items/:id/transition', (req, res) => {
     return fail(res, 409, 'INVALID_TRANSITION', `Invalid transition from ${task.status} to ${parsedToState}`);
   }
 
+  if (parsedToState === 'done') {
+    const unresolvedHardDependencies = getUnresolvedHardDependencies(task.id);
+    if (unresolvedHardDependencies.length) {
+      return fail(res, 409, 'BLOCKED_BY_DEPENDENCY', 'Cannot transition to done while unresolved hard dependencies exist', [
+        {
+          workItemId: task.id,
+          unresolvedDependencyIds: unresolvedHardDependencies.map((item) => item.id)
+        }
+      ]);
+    }
+  }
+
   if (task.status === 'done' && parsedToState === 'in_progress' && !requireNonEmptyString(reason, 'reason')) {
     return fail(res, 400, 'VALIDATION_ERROR', 'reason is required when reopening done items');
   }
@@ -258,6 +286,111 @@ router.patch('/work-items/:id/transition', (req, res) => {
     fromState,
     toState: updated.status,
     updatedAt: updated.updatedAt ?? updatedAt
+  });
+});
+
+router.post('/work-items/:id/dependencies', (req, res) => {
+  const sourceTask = db.tasks.find((item) => item.id === req.params.id);
+  if (!sourceTask) {
+    return fail(res, 404, 'NOT_FOUND', 'Work item not found');
+  }
+
+  const { dependsOnWorkItemId, dependencyType } = req.body as {
+    dependsOnWorkItemId?: unknown;
+    dependencyType?: unknown;
+  };
+
+  const validDependsOnWorkItemId = requireNonEmptyString(dependsOnWorkItemId, 'dependsOnWorkItemId');
+  const validDependencyType = parseDependencyType(dependencyType);
+
+  if (!validDependsOnWorkItemId || !validDependencyType) {
+    return fail(res, 400, 'VALIDATION_ERROR', 'dependsOnWorkItemId and dependencyType(hard|soft) are required');
+  }
+
+  const targetTask = db.tasks.find((item) => item.id === validDependsOnWorkItemId);
+  if (!targetTask) {
+    return fail(res, 404, 'NOT_FOUND', 'dependsOnWorkItemId not found');
+  }
+
+  if (sourceTask.id === targetTask.id || hasDependencyPath(targetTask.id, sourceTask.id)) {
+    return fail(res, 409, 'DEPENDENCY_CYCLE', 'Self or cyclic dependency is not allowed');
+  }
+
+  if (dependencyExists(sourceTask.id, targetTask.id, validDependencyType)) {
+    return fail(res, 409, 'DEPENDENCY_EXISTS', 'Dependency already exists');
+  }
+
+  const dependency = createWorkItemDependency({
+    workItemId: sourceTask.id,
+    dependsOnWorkItemId: targetTask.id,
+    dependencyType: validDependencyType
+  });
+
+  return ok(
+    res,
+    {
+      id: dependency.id,
+      workItemId: dependency.workItemId,
+      dependsOnWorkItemId: dependency.dependsOnWorkItemId,
+      dependencyType: dependency.dependencyType,
+      createdAt: dependency.createdAt
+    },
+    201
+  );
+});
+
+router.get('/execution/dependencies/:id', (req, res) => {
+  const rootTask = db.tasks.find((item) => item.id === req.params.id);
+  if (!rootTask) {
+    return fail(res, 404, 'NOT_FOUND', 'Work item not found');
+  }
+
+  const upstreamVisited = new Set<string>();
+  const downstreamVisited = new Set<string>();
+
+  const upstreamStack = db.workItemDependencies
+    .filter((edge) => edge.workItemId === rootTask.id)
+    .map((edge) => edge.dependsOnWorkItemId);
+
+  while (upstreamStack.length) {
+    const next = upstreamStack.pop();
+    if (!next || upstreamVisited.has(next)) continue;
+    upstreamVisited.add(next);
+    const upstream = db.workItemDependencies.filter((edge) => edge.workItemId === next).map((edge) => edge.dependsOnWorkItemId);
+    upstreamStack.push(...upstream);
+  }
+
+  const downstreamStack = db.workItemDependencies
+    .filter((edge) => edge.dependsOnWorkItemId === rootTask.id)
+    .map((edge) => edge.workItemId);
+
+  while (downstreamStack.length) {
+    const next = downstreamStack.pop();
+    if (!next || downstreamVisited.has(next)) continue;
+    downstreamVisited.add(next);
+    const downstream = db.workItemDependencies.filter((edge) => edge.dependsOnWorkItemId === next).map((edge) => edge.workItemId);
+    downstreamStack.push(...downstream);
+  }
+
+  const toTaskSummary = (taskId: string) => {
+    const task = db.tasks.find((item) => item.id === taskId);
+    return task ? { id: task.id, state: task.status } : { id: taskId, state: 'todo' as const };
+  };
+
+  const blockedBy = Array.from(upstreamVisited)
+    .map((taskId) => db.tasks.find((task) => task.id === taskId))
+    .filter((task): task is Task => {
+      if (!task) return false;
+      return task.status === 'blocked';
+    })
+    .map((task) => ({ id: task.id, state: task.status }));
+
+  return ok(res, {
+    workItemId: rootTask.id,
+    blocked: blockedBy.length > 0,
+    blockedBy,
+    upstream: Array.from(upstreamVisited).map(toTaskSummary),
+    downstream: Array.from(downstreamVisited).map(toTaskSummary)
   });
 });
 

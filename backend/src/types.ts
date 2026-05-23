@@ -32,6 +32,16 @@ export interface Task {
   updatedAt?: string;
 }
 
+export type DependencyType = 'hard' | 'soft';
+
+export interface WorkItemDependency {
+  id: string;
+  workItemId: string;
+  dependsOnWorkItemId: string;
+  dependencyType: DependencyType;
+  createdAt: string;
+}
+
 export interface ChatMessage {
   id: string;
   topic: string;

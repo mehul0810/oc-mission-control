@@ -8,13 +8,15 @@ import type {
   CollabMessage,
   CollabThread,
   Decision,
+  DependencyType,
   DecisionTransitionEvent,
   EventChannel,
   EventPayload,
   OutboxEvent,
   Project,
   Task,
-  TaskStatus
+  TaskStatus,
+  WorkItemDependency
 } from '../types';
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -30,6 +32,7 @@ export const db: {
   collabThreads: CollabThread[];
   collabMessages: CollabMessage[];
   decisions: Decision[];
+  workItemDependencies: WorkItemDependency[];
   outboxEvents: OutboxEvent[];
   activities: ActivityEvent[];
 } = {
@@ -50,6 +53,7 @@ export const db: {
   ],
   collabMessages: [],
   decisions: [],
+  workItemDependencies: [],
   outboxEvents: [],
   activities: []
 };
@@ -264,6 +268,71 @@ export function transitionDecision(
     fromState,
     transitionedAt
   };
+}
+
+export function createWorkItemDependency(input: Omit<WorkItemDependency, 'id' | 'createdAt'>) {
+  const dependency: WorkItemDependency = {
+    id: makeId('dep'),
+    createdAt: nowIso(),
+    ...input
+  };
+
+  db.workItemDependencies.push(dependency);
+
+  addActivity({
+    type: 'task',
+    action: 'dependency_created',
+    entityId: dependency.id,
+    summary: `Dependency linked: ${dependency.workItemId} -> ${dependency.dependsOnWorkItemId}`
+  });
+
+  return dependency;
+}
+
+export function dependencyExists(workItemId: string, dependsOnWorkItemId: string, dependencyType?: DependencyType) {
+  return db.workItemDependencies.some(
+    (edge) =>
+      edge.workItemId === workItemId &&
+      edge.dependsOnWorkItemId === dependsOnWorkItemId &&
+      (dependencyType ? edge.dependencyType === dependencyType : true)
+  );
+}
+
+export function hasDependencyPath(fromWorkItemId: string, toWorkItemId: string) {
+  if (fromWorkItemId === toWorkItemId) return true;
+
+  const visited = new Set<string>();
+  const stack = [fromWorkItemId];
+
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+
+    const nextNodes = db.workItemDependencies
+      .filter((edge) => edge.workItemId === current)
+      .map((edge) => edge.dependsOnWorkItemId);
+
+    for (const next of nextNodes) {
+      if (next === toWorkItemId) return true;
+      if (!visited.has(next)) stack.push(next);
+    }
+  }
+
+  return false;
+}
+
+export function getUnresolvedHardDependencies(workItemId: string) {
+  const hardDependencyIds = db.workItemDependencies
+    .filter((edge) => edge.workItemId === workItemId && edge.dependencyType === 'hard')
+    .map((edge) => edge.dependsOnWorkItemId);
+
+  return hardDependencyIds
+    .map((id) => db.tasks.find((task) => task.id === id))
+    .filter((task): task is Task => {
+      if (!task) return false;
+      return task.status !== 'done';
+    });
 }
 
 export function getTaskStatusBreakdown(filteredTasks: Task[]) {
