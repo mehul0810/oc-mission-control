@@ -1,8 +1,8 @@
 import type { Response } from 'express';
 import type { ApiEnvelope, ApiErrorEnvelope } from '../types';
 
-export function ok<T>(res: Response<ApiEnvelope<T>>, data: T, status = 200) {
-  return res.status(status).json({ data });
+export function ok<T>(res: Response<ApiEnvelope<T>>, data: T, status = 200, meta?: Record<string, unknown>) {
+  return res.status(status).json(meta ? { data, meta } : { data });
 }
 
 export function fail(

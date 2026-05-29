@@ -126,6 +126,18 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
+export interface AuditEvent {
+  id: string;
+  actorId?: string;
+  entityType: 'task' | 'project' | 'chat' | 'agent' | 'system' | 'decision' | 'dependency';
+  entityId: string;
+  action: string;
+  projectId?: string;
+  summary: string;
+  occurredAt: string;
+  payload: Record<string, unknown>;
+}
+
 export interface ApiEnvelope<T> {
   data: T;
   meta?: Record<string, unknown>;

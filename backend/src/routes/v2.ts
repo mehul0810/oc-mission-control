@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Request, Router } from 'express';
 import {
   createDecision,
   createTask,
@@ -43,6 +43,96 @@ const allowedStates: WorkItemState[] = ['todo', 'in_progress', 'blocked', 'done'
 const allowedPriorities: WorkItemPriority[] = ['p0', 'p1', 'p2', 'p3'];
 const allowedDecisionStates: DecisionState[] = ['open', 'decided', 'superseded'];
 const allowedDependencyTypes: DependencyType[] = ['hard', 'soft'];
+
+const maxAuditLimit = 200;
+const defaultAuditLimit = 50;
+const maxAuditExportWindowMs = 31 * 24 * 60 * 60 * 1000;
+
+type AuditQueryFilters = {
+  actorId?: string;
+  entityType?: string;
+  entityId?: string;
+  action?: string;
+  projectId?: string;
+  fromTs?: number;
+  toTs?: number;
+};
+
+function parseDate(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const ts = Date.parse(value);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+function encodeCursor(occurredAt: string, id: string) {
+  return Buffer.from(`${occurredAt}|${id}`, 'utf8').toString('base64url');
+}
+
+function decodeCursor(cursor: unknown): { occurredAt: string; id: string } | null {
+  if (typeof cursor !== 'string' || !cursor.length) return null;
+  try {
+    const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
+    const [occurredAt, id] = decoded.split('|');
+    if (!occurredAt || !id || !Number.isFinite(Date.parse(occurredAt))) return null;
+    return { occurredAt, id };
+  } catch {
+    return null;
+  }
+}
+
+function getAuditFilters(req: Request): { filters: AuditQueryFilters } | { error: string } {
+  const actorId = req.query.actorId ? String(req.query.actorId) : undefined;
+  const entityType = req.query.entityType ? String(req.query.entityType) : req.query.entity ? String(req.query.entity) : undefined;
+  const entityId = req.query.entityId ? String(req.query.entityId) : undefined;
+  const action = req.query.action ? String(req.query.action) : undefined;
+  const projectId = req.query.projectId ? String(req.query.projectId) : undefined;
+  const fromTs = req.query.from ? (parseDate(req.query.from) ?? undefined) : undefined;
+  const toTs = req.query.to ? (parseDate(req.query.to) ?? undefined) : undefined;
+
+  if (req.query.from && fromTs == null) return { error: 'from must be a valid ISO-8601 datetime' };
+  if (req.query.to && toTs == null) return { error: 'to must be a valid ISO-8601 datetime' };
+  if (fromTs != null && toTs != null && fromTs > toTs) return { error: 'from must be less than or equal to to' };
+
+  return {
+    filters: {
+      actorId,
+      entityType,
+      entityId,
+      action,
+      projectId,
+      fromTs,
+      toTs
+    }
+  };
+}
+
+function queryAuditEvents(filters: AuditQueryFilters) {
+  return db.auditEvents
+    .filter((event) => {
+      if (filters.actorId && event.actorId !== filters.actorId) return false;
+      if (filters.entityType && event.entityType !== filters.entityType) return false;
+      if (filters.entityId && event.entityId !== filters.entityId) return false;
+      if (filters.action && event.action !== filters.action) return false;
+      if (filters.projectId && event.projectId !== filters.projectId) return false;
+
+      const occurredTs = Date.parse(event.occurredAt);
+      if (filters.fromTs != null && occurredTs < filters.fromTs) return false;
+      if (filters.toTs != null && occurredTs > filters.toTs) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const tsDiff = Date.parse(b.occurredAt) - Date.parse(a.occurredAt);
+      if (tsDiff !== 0) return tsDiff;
+      return b.id.localeCompare(a.id);
+    });
+}
+
+function csvEscape(value: string) {
+  if (value.includes('"') || value.includes(',') || value.includes('\n')) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
 
 function parseState(value: unknown): WorkItemState | null {
   if (typeof value !== 'string') return null;
@@ -524,6 +614,76 @@ router.patch('/decisions/:id/transition', (req, res) => {
     toState: transitioned.decision.state,
     transitionedAt: transitioned.transitionedAt
   });
+});
+
+router.get('/audit/events', (req, res) => {
+  const parsedFilters = getAuditFilters(req);
+  if ('error' in parsedFilters) {
+    return fail(res, 400, 'VALIDATION_ERROR', parsedFilters.error);
+  }
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || defaultAuditLimit, 1), maxAuditLimit);
+  const cursor = req.query.cursor ? decodeCursor(req.query.cursor) : null;
+  if (req.query.cursor && !cursor) {
+    return fail(res, 400, 'VALIDATION_ERROR', 'cursor is invalid');
+  }
+
+  const filtered = queryAuditEvents(parsedFilters.filters);
+  const cursorFiltered = cursor
+    ? filtered.filter((event) => {
+        if (event.occurredAt < cursor.occurredAt) return true;
+        if (event.occurredAt > cursor.occurredAt) return false;
+        return event.id < cursor.id;
+      })
+    : filtered;
+
+  const items = cursorFiltered.slice(0, limit);
+  const nextCursor = cursorFiltered.length > limit ? encodeCursor(items[items.length - 1].occurredAt, items[items.length - 1].id) : null;
+
+  return ok(
+    res,
+    { items },
+    200,
+    {
+      count: items.length,
+      nextCursor
+    }
+  );
+});
+
+router.get('/audit/events/export', (req, res) => {
+  const parsedFilters = getAuditFilters(req);
+  if ('error' in parsedFilters) {
+    return fail(res, 400, 'VALIDATION_ERROR', parsedFilters.error);
+  }
+
+  const fromTs = parsedFilters.filters.fromTs;
+  const toTs = parsedFilters.filters.toTs;
+  if (fromTs != null && toTs != null && toTs - fromTs > maxAuditExportWindowMs) {
+    return fail(res, 400, 'VALIDATION_ERROR', 'Export date range cannot exceed 31 days');
+  }
+
+  const items = queryAuditEvents(parsedFilters.filters);
+
+  const header = ['id', 'occurredAt', 'actorId', 'entityType', 'entityId', 'action', 'projectId', 'summary'];
+  const rows = items.map((event) =>
+    [
+      event.id,
+      event.occurredAt,
+      event.actorId ?? '',
+      event.entityType,
+      event.entityId,
+      event.action,
+      event.projectId ?? '',
+      event.summary
+    ]
+      .map((value) => csvEscape(String(value)))
+      .join(',')
+  );
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="audit-events.csv"');
+  return res.status(200).send(`${header.join(',')}\n${rows.join('\n')}`);
 });
 
 export default router;

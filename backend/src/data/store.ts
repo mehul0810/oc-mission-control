@@ -3,6 +3,7 @@ import type {
   ActivityEvent,
   Agent,
   AgentStatus,
+  AuditEvent,
   ChatMessage,
   CollabMessageCreatedEvent,
   CollabMessage,
@@ -35,6 +36,7 @@ export const db: {
   workItemDependencies: WorkItemDependency[];
   outboxEvents: OutboxEvent[];
   activities: ActivityEvent[];
+  auditEvents: AuditEvent[];
 } = {
   agents: clone(seedAgents),
   projects: clone(seedProjects),
@@ -55,8 +57,62 @@ export const db: {
   decisions: [],
   workItemDependencies: [],
   outboxEvents: [],
-  activities: []
+  activities: [],
+  auditEvents: []
 };
+
+function inferEntityType(activity: ActivityEvent): AuditEvent['entityType'] {
+  if (activity.type === 'system' && activity.action.startsWith('decision_')) return 'decision';
+  if (activity.type === 'task' && activity.action === 'dependency_created') return 'dependency';
+  return activity.type;
+}
+
+function inferProjectId(activity: ActivityEvent): string | undefined {
+  if (activity.type === 'project') return activity.entityId;
+
+  if (activity.type === 'task') {
+    if (activity.action === 'dependency_created') {
+      const dependency = db.workItemDependencies.find((edge) => edge.id === activity.entityId);
+      if (!dependency) return undefined;
+      const sourceTask = db.tasks.find((task) => task.id === dependency.workItemId);
+      return sourceTask?.projectId;
+    }
+    const task = db.tasks.find((item) => item.id === activity.entityId);
+    return task?.projectId;
+  }
+
+  if (activity.type === 'chat' && activity.action === 'collab_message_posted') {
+    const collabMessage = db.collabMessages.find((item) => item.id === activity.entityId);
+    return collabMessage?.projectId;
+  }
+
+  if (activity.type === 'system' && activity.action.startsWith('decision_')) {
+    const decision = db.decisions.find((item) => item.id === activity.entityId);
+    return decision?.projectId;
+  }
+
+  return undefined;
+}
+
+function appendAuditEvent(activity: ActivityEvent) {
+  const auditEvent: AuditEvent = {
+    id: makeId('audit'),
+    actorId: activity.actorAgentId,
+    entityType: inferEntityType(activity),
+    entityId: activity.entityId,
+    action: activity.action,
+    projectId: inferProjectId(activity),
+    summary: activity.summary,
+    occurredAt: activity.createdAt,
+    payload: {
+      summary: activity.summary,
+      activityType: activity.type
+    }
+  };
+
+  db.auditEvents.unshift(auditEvent);
+  db.auditEvents = db.auditEvents.slice(0, 5000);
+}
 
 export const eventBus = {
   listeners: new Set<(payload: EventPayload<EventChannel>) => void>(),
@@ -73,6 +129,7 @@ export function addActivity(input: Omit<ActivityEvent, 'id' | 'createdAt'>): Act
   };
   db.activities.unshift(item);
   db.activities = db.activities.slice(0, 200);
+  appendAuditEvent(item);
   eventBus.emit('activity', item);
   return item;
 }

@@ -102,6 +102,20 @@ status_invalid_transition="$(curl -s -o /tmp/oc_invalid_transition_v2.json -w '%
 [[ "$status_invalid_transition" == "409" ]] || { echo "Expected 409, got $status_invalid_transition"; exit 1; }
 jq -e '.error.code == "INVALID_TRANSITION"' /tmp/oc_invalid_transition_v2.json >/dev/null
 
+# Audit explorer + CSV export parity
+audit_from="2026-05-01T00:00:00Z"
+audit_to="2026-05-31T23:59:59Z"
+curl -fsS "$BASE_URL/api/v2/audit/events?actorId=agent-peter&entityType=task&action=updated&projectId=project-mc&from=$audit_from&to=$audit_to&limit=100" -o /tmp/oc_audit_filtered.json
+jq -e '.data.items | type == "array"' /tmp/oc_audit_filtered.json >/dev/null
+jq -e '.meta.count == (.data.items | length)' /tmp/oc_audit_filtered.json >/dev/null
+
+curl -fsS "$BASE_URL/api/v2/audit/events/export?actorId=agent-peter&entityType=task&action=updated&projectId=project-mc&from=$audit_from&to=$audit_to" -o /tmp/oc_audit_filtered.csv
+csv_rows=$(tail -n +2 /tmp/oc_audit_filtered.csv | sed '/^$/d' | awk 'END{print NR}')
+json_rows=$(jq '.data.items | length' /tmp/oc_audit_filtered.json)
+[[ "$csv_rows" == "$json_rows" ]] || { echo "Audit CSV/JSON parity mismatch: csv=$csv_rows json=$json_rows"; exit 1; }
+
+head -n 1 /tmp/oc_audit_filtered.csv | grep -q '^id,occurredAt,actorId,entityType,entityId,action,projectId,summary$' || { echo "Unexpected audit CSV header"; exit 1; }
+
 # Event stream endpoint accepts connection (SSE stays open; curl may timeout by design)
 set +e
 stream_headers="$(curl -sS -D - -o /dev/null --max-time 2 "$BASE_URL/api/v1/events/stream" 2>/dev/null)"
